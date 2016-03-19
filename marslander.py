@@ -2,11 +2,13 @@ import tkinter
 import tkinter.messagebox
 import math
 import random
+import time
+import cProfile
 
 width = 1200
 height = 700
 GRAV = 3.711
-POD_RADIUS = 10
+POD_RADIUS = 5
 MAX_VSPEED_LANDING = 40
 MAX_HSPEED_LANDING = 20
 
@@ -32,7 +34,7 @@ class Pod:
         self.power = 0
         self.fuel = 0
     def __str__(self):
-        return 'position : ' + str(self.position) + ', speed : ' + str(self.speed) + ', angle : ' + str(self.angle)
+        return 'position : ' + str(self.position) + ', speed : ' + str(self.speed) + ', angle : ' + str(self.angle) + ', fuel : ' + str(self.fuel)
 
 class Vector:
     def __init__(self, x=0, y=0):
@@ -104,7 +106,10 @@ def intersectionLines(l1, l2):
     ((x1*y2-y1*x2)*(y3-y4) - (y1-y2)*(x3*y4 - y3*x4))/((x1-x2)*(y3-y4)-(y1-y2)*(x3-x4)))
 
 def inRangeSorted(val, val1, val2):
-    return inRange(val, min(val1,val2), max(val1,val2))
+    if val1 <= val2:
+        return inRange(val, val1, val2)
+    else:
+        return inRange(val, val2, val1)
 
 def inRange(val, min, max):
     return val >= min and val <= max
@@ -125,6 +130,7 @@ def updateGame(state, angle, power):
     newState.pod.power = power
     newState.pod.speed = state.pod.speed.add(acceleration)
     newState.pod.position = state.pod.position.apply(newState.pod.speed)
+    newState.pod.fuel = state.pod.fuel - power
     newState.history = list(state.history)
     newState.history.append((angle,power))
     return newState
@@ -132,10 +138,13 @@ def updateGame(state, angle, power):
 def isFlat(line):
     return line.p1.y == line.p2.y
 
+def lastMove(pod):
+    return Segment(pod.position,  pod.position.apply(Vector(-pod.speed.x, -pod.speed.y)))
+
 def lastMoveInCollisionWithNotFlatLine(state, line):
     pod = state.pod
-    lastMove = Segment(pod.position,  pod.position.apply(Vector(-pod.speed.x, -pod.speed.y)))
-    inter = intersectionSegments(lastMove,line)
+    last = lastMove(pod)
+    inter = intersectionSegments(last,line)
     coliNotFlat = inter and not isFlat(line)
     """
     if coliNotFlat:
@@ -145,8 +154,8 @@ def lastMoveInCollisionWithNotFlatLine(state, line):
 
 def lastMoveInCollisionWithFlatLine(state, line):
     pod = state.pod
-    lastMove = Segment(pod.position,  pod.position.apply(Vector(-pod.speed.x, -pod.speed.y)))
-    inter = intersectionSegments(lastMove,line)
+    last = lastMove(pod)
+    inter = intersectionSegments(last,line)
     coliFlat = inter and isFlat(line)
     if coliFlat:
         print('.',end='')
@@ -158,11 +167,17 @@ def empty(list):
 
 def collisionWithNotFlatMountain(state, mountainLines):
     functionLastMoveCollision = lambda line : lastMoveInCollisionWithNotFlatLine(state, line)
-    return not empty(list(filter(functionLastMoveCollision, mountainLines)))
+    for line in mountainLines:
+        if functionLastMoveCollision(line):
+            return True
+    return False
 
 def collisionWithFlatMountain(state, mountainLines):
     functionLastMoveCollision = lambda line : lastMoveInCollisionWithFlatLine(state, line)
-    return not empty(list(filter(functionLastMoveCollision, mountainLines)))
+    for line in mountainLines:
+        if functionLastMoveCollision(line):
+            return True
+    return False
 
 def inBoundaries(point):
     return inRangeSorted(point.x, 0, width) \
@@ -177,8 +192,9 @@ def podSpeedCanLand(pod):
         and abs(pod.speed.x) <= MAX_HSPEED_LANDING
 
 def win(state, mountainLines):
-    return collisionWithFlatMountain(state, mountainLines) \
-        and podSpeedCanLand(state.pod)
+    return podSpeedCanLand(state.pod) and \
+        collisionWithFlatMountain(state, mountainLines)# \
+        #and round(state.pod.angle) == 90
 
 def showMove(canvas, state, pod, mountainLines):
     #canvas.delete("moving")
@@ -186,7 +202,7 @@ def showMove(canvas, state, pod, mountainLines):
     sTemp.pod = pod
     path = []
     index = 0
-    while not lost(sTemp, mountainLines) and not win(sTemp, mountainLines) :
+    while True :
         #print('index:',index,', history:', state.history)
         sTemp = updateGame(sTemp, state.history[index][0], state.history[index][1])
         path.append((sTemp.pod.position.x, sTemp.pod.position.y))
@@ -194,20 +210,21 @@ def showMove(canvas, state, pod, mountainLines):
         if podSpeedCanLand(sTemp.pod):
             drawPod(canvas,sTemp.pod, 'green')
         else:
-            drawPod(canvas,sTemp.pod, 'red')
+            """drawPod(canvas,sTemp.pod, 'red')"""
         index += 1
+        if lost(sTemp, mountainLines) or win(sTemp, mountainLines):
+            break;
 
     drawPod(canvas,state.pod, 'white')
     drawMultiLines(canvas, coordsToLines(path), 'blue')
 
 def startSimu(pod, mountainLines):
     s = State()
-    copy = s
     s.pod = pod
 
     while not lost(s, mountainLines) and not win(s, mountainLines):
-        power = random.randint(max(0,s.pod.power-1),min(s.pod.power+1,4))
-        angle = random.randint(s.pod.angle-15,s.pod.angle+15)
+        power = min(s.pod.fuel,random.randint(max(0,s.pod.power-1),min(s.pod.power+1,4)))
+        angle = min(180,max(0, random.randint(s.pod.angle-15,s.pod.angle+15)))
         s = updateGame(s, angle, power)
 
     return (s, win(s, mountainLines))
@@ -218,33 +235,37 @@ def computeCoordinates(relief):
     return list(map(lambda x, y : (x,y), map(lambda x: widthOfALine * x, range(nbPoints)), relief))
 
 def main():
-    relief = [600,160,100,60,60,200,600]
+    relief = [600,100,200,300,300,600]
     coordinates = computeCoordinates(relief)
     createWindow(coordinates)
+
+def findAndShow(mountainLines, canvas):
+    found=0
+    pod = Pod()
+    pod.position = Point(300, 300)
+    pod.speed = Vector(0,0)
+    pod.angle = 90
+    pod.fuel = 500
+    pod.power = 3
+    while found<1:
+        res = startSimu(pod, mountainLines)
+        s = res[0]
+        if res[1]:
+            found += 1
+            print('final state : ', s)
+            showMove(canvas, s, pod, mountainLines)
+
 
 def createWindow(coordinates):
     top = tkinter.Tk()
     canvas = tkinter.Canvas(top, bg="black", height=height, width=width)
     drawLandscape(canvas, coordinates)
     canvas.pack()
-    p = Pod()
-    p.position = Point(300, 300)
-    p.speed = Vector(30, 20)
-    p.angle = 90
-    p.fuel = 2000
-    p.power = 3
     mountainLines = coordsToLines(coordinates)
-
-    found=0
-
-    while found<5:
-        res = startSimu(p, mountainLines)
-        s = res[0]
-        if res[1]:
-            found += 1
-            print('final state : ', s)
-            showMove(canvas, s, p, mountainLines)
-
+    start_time = time.time()
+    findAndShow(mountainLines, canvas)
+    print('')
+    print('time : ', time.time() - start_time)
     top.mainloop()
 
 main()

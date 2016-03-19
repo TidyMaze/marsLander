@@ -6,7 +6,9 @@ import random
 width = 1200
 height = 700
 GRAV = 3.711
-POD_RADIUS = 25
+POD_RADIUS = 10
+MAX_VSPEED_LANDING = 40
+MAX_HSPEED_LANDING = 20
 
 class State:
     def __init__(self):
@@ -115,7 +117,7 @@ def intersectionSegments(s1, s2):
 
 def updateGame(state, angle, power):
     vectorThrust = Vector(math.cos(math.radians(angle))*power, math.sin(math.radians(angle))*power)
-    print('thrust acc : ', vectorThrust)
+    #print('thrust acc : ', vectorThrust)
     acceleration = Vector(0, -GRAV).add(vectorThrust)
     newState = State()
     newState.pod = Pod()
@@ -128,23 +130,38 @@ def updateGame(state, angle, power):
     return newState
 
 def isFlat(line):
-    return line.p1.y == line.p2.x
+    return line.p1.y == line.p2.y
 
 def lastMoveInCollisionWithNotFlatLine(state, line):
-    #print('checking collision between ', state, ' and ', line)
     pod = state.pod
     lastMove = Segment(pod.position,  pod.position.apply(Vector(-pod.speed.x, -pod.speed.y)))
     inter = intersectionSegments(lastMove,line)
     coliNotFlat = inter and not isFlat(line)
+    """
     if coliNotFlat:
         print('collision entre ', lastMove, ' and ', line)
+    """
     return coliNotFlat
+
+def lastMoveInCollisionWithFlatLine(state, line):
+    pod = state.pod
+    lastMove = Segment(pod.position,  pod.position.apply(Vector(-pod.speed.x, -pod.speed.y)))
+    inter = intersectionSegments(lastMove,line)
+    coliFlat = inter and isFlat(line)
+    if coliFlat:
+        print('.',end='')
+        #print('collision flat entre ', lastMove, ' and ', line)
+    return coliFlat
 
 def empty(list):
     return len(list) == 0
 
 def collisionWithNotFlatMountain(state, mountainLines):
     functionLastMoveCollision = lambda line : lastMoveInCollisionWithNotFlatLine(state, line)
+    return not empty(list(filter(functionLastMoveCollision, mountainLines)))
+
+def collisionWithFlatMountain(state, mountainLines):
+    functionLastMoveCollision = lambda line : lastMoveInCollisionWithFlatLine(state, line)
     return not empty(list(filter(functionLastMoveCollision, mountainLines)))
 
 def inBoundaries(point):
@@ -155,21 +172,26 @@ def lost(state, mountainLines):
     return not inBoundaries(state.pod.position) \
         or collisionWithNotFlatMountain(state, mountainLines)
 
-def win(state):
-    return False
+def podSpeedCanLand(pod):
+    return abs(pod.speed.y) <= MAX_VSPEED_LANDING \
+        and abs(pod.speed.x) <= MAX_HSPEED_LANDING
+
+def win(state, mountainLines):
+    return collisionWithFlatMountain(state, mountainLines) \
+        and podSpeedCanLand(state.pod)
 
 def showMove(canvas, state, pod, mountainLines):
-    canvas.delete("moving")
+    #canvas.delete("moving")
     sTemp = State()
     sTemp.pod = pod
     path = []
     index = 0
-    while not lost(sTemp, mountainLines) and not win(sTemp) :
-        print('index:',index,', history:', state.history)
+    while not lost(sTemp, mountainLines) and not win(sTemp, mountainLines) :
+        #print('index:',index,', history:', state.history)
         sTemp = updateGame(sTemp, state.history[index][0], state.history[index][1])
         path.append((sTemp.pod.position.x, sTemp.pod.position.y))
 
-        if abs(sTemp.pod.speed.y) <= 40 and abs(sTemp.pod.speed.x) <= 20:
+        if podSpeedCanLand(sTemp.pod):
             drawPod(canvas,sTemp.pod, 'green')
         else:
             drawPod(canvas,sTemp.pod, 'red')
@@ -183,12 +205,12 @@ def startSimu(pod, mountainLines):
     copy = s
     s.pod = pod
 
-    while not lost(s, mountainLines) and not win(s):
-        power = random.randint(max(3,s.pod.power-1),min(s.pod.power+1,4))
+    while not lost(s, mountainLines) and not win(s, mountainLines):
+        power = random.randint(max(0,s.pod.power-1),min(s.pod.power+1,4))
         angle = random.randint(s.pod.angle-15,s.pod.angle+15)
         s = updateGame(s, angle, power)
 
-    return s
+    return (s, win(s, mountainLines))
 
 def computeCoordinates(relief):
     nbPoints = len(relief)
@@ -207,14 +229,22 @@ def createWindow(coordinates):
     canvas.pack()
     p = Pod()
     p.position = Point(300, 300)
-    p.speed = Vector(0, 0)
+    p.speed = Vector(30, 20)
     p.angle = 90
     p.fuel = 2000
-    p.power = 2
+    p.power = 3
     mountainLines = coordsToLines(coordinates)
-    s = startSimu(p, mountainLines)
-    showMove(canvas, s, p, mountainLines)
-    print('final state : ', s)
+
+    found=0
+
+    while found<5:
+        res = startSimu(p, mountainLines)
+        s = res[0]
+        if res[1]:
+            found += 1
+            print('final state : ', s)
+            showMove(canvas, s, p, mountainLines)
+
     top.mainloop()
 
 main()
